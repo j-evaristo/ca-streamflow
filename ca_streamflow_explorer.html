@@ -1435,7 +1435,7 @@ function renderFoot(){
   const p0 = document.createElement("div");
   p0.textContent = "Evaristo Critical Zone Hydrology Lab";
   const p1 = document.createElement("div");
-  p1.textContent = "Source: U.S. Geological Survey National Water Information System, daily values service " +
+  p1.textContent = "Source: U.S. Geological Survey Water Data APIs, National Water Information System daily values " +
     "(parameter 00060, discharge in cubic feet per second). Retrieved " + INDEX.generated + ".";
   const p2 = document.createElement("div");
   if (s.nP > 0){
@@ -1488,7 +1488,7 @@ function buildStationCSV(){
     "USGS " + state.site.no + " " + state.site.nm,
     statLabel(state.stat) + " discharge, cubic feet per second (parameter 00060)",
     "Date range " + isoDay(state.range[0]) + " to " + isoDay(state.range[1]),
-    "Source: USGS NWIS daily values, retrieved " + INDEX.generated + "; recent values may be provisional"
+    "Source: USGS Water Data APIs (NWIS daily values), retrieved " + INDEX.generated + "; recent values may be provisional"
   ], ["site_no", "date", "discharge_cfs"], rows);
   return { filename: "USGS_" + state.site.no + "_discharge_" + isoDay(state.range[0]) + "_" + isoDay(state.range[1]) + ".csv", text };
 }
@@ -1499,7 +1499,7 @@ function buildListCSV(){
   });
   const text = csvText([
     "USGS California streamflow gaging stations (" + rows.length + " of " + SITES.length + " matching the current search)",
-    "Source: USGS NWIS, retrieved " + INDEX.generated
+    "Source: USGS Water Data APIs (NWIS), retrieved " + INDEX.generated
   ], ["site_no", "station_nm", "lat", "lon", "county", "huc", "drainage_area_sqmi", "begin_date", "end_date", "n_daily_values"], rows);
   return { filename: "usgs_ca_streamflow_stations.csv", text };
 }
