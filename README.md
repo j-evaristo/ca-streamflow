@@ -3,17 +3,21 @@
 **Evaristo Critical Zone Hydrology Lab**
 
 Complete daily discharge (streamflow) record for every USGS gaging station in
-California, plus an interactive offline viewer.
+California, plus an interactive offline viewer. Tidal stations also carry
+tide-filtered daily discharge - the meaningful measure of net flow where the
+tide reverses the current - including the Sacramento-San Joaquin Delta
+stations that publish only tide-filtered flow.
 
 **Source:** USGS Water Data APIs (`api.waterdata.usgs.gov`), daily values of
-parameter code **00060** (discharge, cubic feet per second), updated nightly.
+parameter code **00060** (discharge) and, at tidal stations, **72137**
+(tide-filtered discharge), in cubic feet per second, updated nightly.
 
 ## Contents
 
 | Path | What it is |
 |---|---|
 | `ca_streamflow_explorer.html` | **Interactive viewer** — open directly in any browser (no server needed). Keep the `data/` folder next to it. |
-| `data/csv/USGS_<site>.csv` | Daily values per station: `site_no, date, stat_cd, discharge_cfs, qualifiers, method_id, method_desc` (`method_id` is the USGS time-series id). |
+| `data/csv/USGS_<site>.csv` | Daily values per station: `site_no, date, stat_cd, discharge_cfs, qualifiers, method_id, method_desc, parm_cd` (`method_id` is the USGS time-series id; `parm_cd` 00060 = discharge, 72137 = tide-filtered discharge). |
 | `data/sites_metadata.csv` | One row per station: name, coordinates, county, HUC, drainage area, altitude, period of record, counts. |
 | `data/raw/` | Station metadata from the USGS Water Data APIs (legacy RDB column layout) and the daily time series included (`series.json`). |
 | `data/state/sync_state.json` | Nightly update watermark and reconcile position. |

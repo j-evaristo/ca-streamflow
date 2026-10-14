@@ -23,7 +23,9 @@ os.makedirs(SITES_DIR, exist_ok=True)
 EPOCH = date(1970, 1, 1)
 GAP_DAYS = 45  # gaps longer than this start a new segment
 
-STAT_PREF = ["00003", "00021", "00022", "00023", "00024", "00001", "00002"]
+# Series keys are the statistic code for discharge (00060) and
+# "<parameter>:<statistic>" for other parameters (72137 = tide-filtered).
+STAT_PREF = ["00003", "72137:00003", "00021", "00022", "00023", "00024", "00001", "00002"]
 
 
 def parse_rdb(path):
@@ -105,7 +107,8 @@ def process_site_csv(site_no):
     with open(path, encoding="utf-8") as f:
         r = csv.DictReader(f)
         for row in r:
-            stat = row["stat_cd"]
+            parm = row.get("parm_cd") or "00060"
+            stat = row["stat_cd"] if parm == "00060" else f"{parm}:{row['stat_cd']}"
             raw = row["discharge_cfs"]
             if raw == "":
                 v = None
@@ -154,6 +157,7 @@ def process_site_csv(site_no):
             "n": len(pts),
             "b": pts[0][0],
             "e": pts[-1][0],
+            "days": {d for d, _ in pts},
         }
     return series, quals
 
@@ -179,6 +183,17 @@ def main():
             print(f"WARN: no data series for {site_no}")
             continue
         pref = next((s for s in STAT_PREF if s in series), sorted(series)[0])
+        # where the daily-mean record has stopped but the tide-filtered one
+        # continues (e.g. Sacramento R at Freeport), show the current record
+        if pref == "00003" and "72137:00003" in series and \
+                series["72137:00003"]["e"] - series["00003"]["e"] > GAP_DAYS:
+            pref = "72137:00003"
+        # station period of record: both daily-mean discharge series (a
+        # record continued as tide-filtered discharge counts in full), days
+        # covered by both counted once; else the preferred series
+        rec_keys = [k for k in ("00003", "72137:00003") if k in series] or [pref]
+        rec_days = set().union(*(series[k]["days"] for k in rec_keys))
+        por = [min(rec_days), max(rec_days), len(rec_days)]
         m = meta[site_no]
         out = {"series": {}}
         stats_idx = {}
@@ -214,12 +229,12 @@ def main():
             "tp": m.get("site_tp_cd", "").strip(),
             "stats": stats_idx,
             "pref": pref,
+            "por": por,
             "nP": quals["P"],
             "nE": quals["e"],
         }
         index.append(entry)
 
-        pref_s = series[pref]
         meta_rows.append({
             "site_no": site_no,
             "station_nm": entry["nm"],
@@ -235,11 +250,13 @@ def main():
             "alt_datum_cd": entry["altd"],
             "drain_area_sqmi": m.get("drain_area_va", "").strip(),
             "contrib_drain_area_sqmi": m.get("contrib_drain_area_va", "").strip(),
-            "begin_date": (EPOCH.fromordinal(EPOCH.toordinal() + pref_s["b"])).isoformat(),
-            "end_date": (EPOCH.fromordinal(EPOCH.toordinal() + pref_s["e"])).isoformat(),
-            "n_daily_values": pref_s["n"],
-            "preferred_stat_cd": pref,
-            "all_stat_cds": " ".join(sorted(series)),
+            "begin_date": (EPOCH.fromordinal(EPOCH.toordinal() + por[0])).isoformat(),
+            "end_date": (EPOCH.fromordinal(EPOCH.toordinal() + por[1])).isoformat(),
+            "n_daily_values": por[2],
+            "preferred_parm_cd": pref.split(":")[0] if ":" in pref else "00060",
+            "preferred_stat_cd": pref.split(":")[-1],
+            "all_stat_cds": " ".join(sorted({k.split(":")[-1] for k in series})),
+            "all_series": " ".join(sorted(k if ":" in k else "00060:" + k for k in series)),
             "n_provisional_days": quals["P"],
             "n_estimated_days": quals["e"],
         })
@@ -247,7 +264,7 @@ def main():
     index_obj = {
         "generated": date.today().isoformat(),
         "state": "CA",
-        "parameter": "00060 Discharge, cubic feet per second",
+        "parameter": "00060 Discharge; 72137 Discharge, tide-filtered (cubic feet per second)",
         "boundary": boundary,
         "sites": index,
     }

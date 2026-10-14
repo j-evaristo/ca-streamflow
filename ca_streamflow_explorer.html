@@ -225,7 +225,7 @@ tbody tr:nth-child(even){background:var(--sel-bg)}
             <div class="card-head">
               <div>
                 <h3>Flow duration curve</h3>
-                <p class="card-sub">Percent of days the flow is equaled or exceeded, selected range — probability scale spreads the extremes</p>
+                <p class="card-sub" id="fdcSub">Percent of days the flow is equaled or exceeded, selected range — probability scale spreads the extremes</p>
               </div>
             </div>
             <div class="chart-wrap">
@@ -281,8 +281,12 @@ const DAY = 86400000;
 const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 const STAT_LABELS = {
   "00003":"Daily mean","00001":"Daily maximum","00002":"Daily minimum",
-  "00021":"Tidal high–high","00022":"Tidal low–high","00023":"Tidal high–low","00024":"Tidal low–low"
+  "00021":"Tidal high–high","00022":"Tidal low–high","00023":"Tidal high–low","00024":"Tidal low–low",
+  "72137:00003":"Tide-filtered daily mean"
 };
+const statParam = s => s.includes(":") ? s.split(":")[0] + ", tide-filtered" : "00060";
+// station period of record [begin, end, days] across its daily-mean series
+const rec = s => s.por || s.stats[s.pref];
 const statLabel = s => STAT_LABELS[s] || ("Statistic " + s);
 const dOf = day => new Date(day * DAY);
 const fmtDate = day => { const d = dOf(day); return MONTHS[d.getUTCMonth()] + " " + d.getUTCDate() + ", " + d.getUTCFullYear(); };
@@ -366,7 +370,7 @@ const loaded = {};     // siteNo -> true once its script has run
 (function headerSummary(){
   if (!INDEX){ return; }
   let total = 0, minB = Infinity, maxE = -Infinity;
-  SITES.forEach(s => { const p = s.stats[s.pref]; total += p[2]; minB = Math.min(minB, p[0]); maxE = Math.max(maxE, p[1]); });
+  SITES.forEach(s => { const p = rec(s); total += p[2]; minB = Math.min(minB, p[0]); maxE = Math.max(maxE, p[1]); });
   document.getElementById("searchBox").placeholder =
     "Search " + SITES.length.toLocaleString("en-US") + " gages — number, name, county…";
   document.getElementById("headerSub").textContent =
@@ -381,15 +385,15 @@ const siteListEl = document.getElementById("siteList");
 const listCountEl = document.getElementById("listCount");
 let filtered = SITES.slice();
 
-function recordYears(s){ const p = s.stats[s.pref]; return (p[1] - p[0]) / 365.25; }
+function recordYears(s){ const p = rec(s); return (p[1] - p[0]) / 365.25; }
 function sortSites(arr){
   const k = sortSel.value;
   const c = arr.slice();
   if (k === "no") c.sort((a,b) => a.no < b.no ? -1 : 1);
   else if (k === "nm") c.sort((a,b) => a.nm.localeCompare(b.nm));
-  else if (k === "len") c.sort((a,b) => b.stats[b.pref][2] - a.stats[a.pref][2]);
+  else if (k === "len") c.sort((a,b) => rec(b)[2] - rec(a)[2]);
   else if (k === "da") c.sort((a,b) => (b.da||0) - (a.da||0));
-  else if (k === "end") c.sort((a,b) => b.stats[b.pref][1] - a.stats[a.pref][1]);
+  else if (k === "end") c.sort((a,b) => rec(b)[1] - rec(a)[1]);
   return c;
 }
 function applyFilter(){
@@ -414,7 +418,7 @@ function renderList(){
     btn.dataset.no = s.no;
     const l1 = document.createElement("span"); l1.className = "no"; l1.textContent = s.no;
     const l2 = document.createElement("span"); l2.className = "nm"; l2.textContent = s.nm;
-    const p = s.stats[s.pref];
+    const p = rec(s);
     const meta = document.createElement("span"); meta.className = "meta";
     meta.textContent = yearOf(p[0]) + "–" + yearOf(p[1]) +
       " · " + p[2].toLocaleString("en-US") + " days" + (s.da ? " · " + s.da.toLocaleString("en-US") + " mi²" : "");
@@ -587,7 +591,7 @@ function renderStationHead(){
   a.href = "https://waterdata.usgs.gov/monitoring-location/" + s.no + "/";
   const chips = document.getElementById("chips");
   chips.textContent = "";
-  const p = s.stats[s.pref];
+  const p = rec(s);
   const items = [
     ["Period of record", yearOf(p[0]) + "–" + yearOf(p[1])],
     ["Daily values", p[2].toLocaleString("en-US")],
@@ -946,24 +950,38 @@ function renderBrush(){
   const p = state.site.stats[state.stat];
   const b0 = p[0], b1 = Math.max(p[1], p[0] + 1);
   const x = d => (d - b0) / (b1 - b0) * W;
-  const colMax = new Float64Array(W).fill(0);
-  let vmax = 0;
+  // per-column extremes; reverse (negative) flow is drawn below a zero line
+  const colMax = new Float64Array(W).fill(0), colMin = new Float64Array(W).fill(0);
+  let vmax = 0, vmin = 0;
   for (let i = 0; i < state.days.length; i++){
-    const v = Math.max(0, state.vals[i]);
+    const v = state.vals[i];
+    if (v == null || !isFinite(v)) continue;
     const cix = Math.min(W - 1, Math.max(0, Math.floor(x(state.days[i]))));
     if (v > colMax[cix]) colMax[cix] = v;
+    if (v < colMin[cix]) colMin[cix] = v;
     if (v > vmax) vmax = v;
+    if (v < vmin) vmin = v;
   }
   ctx.clearRect(0, 0, W, H);
   ctx.fillStyle = C.wash2;
-  const sc = vmax > 0 ? (H - 4) / Math.sqrt(vmax) : 0;
+  const span = Math.sqrt(vmax) + Math.sqrt(-vmin);
+  const sc = span > 0 ? (H - 4) / span : 0;
+  const yZero = vmin < 0 ? 2 + Math.sqrt(vmax) * sc : H;
   for (let cix = 0; cix < W; cix++){
-    if (colMax[cix] <= 0) continue;
-    const h = Math.max(1, Math.sqrt(colMax[cix]) * sc);
-    ctx.fillRect(cix, H - h, 1, h);
+    if (colMax[cix] > 0){
+      const h = Math.max(1, Math.sqrt(colMax[cix]) * sc);
+      ctx.fillRect(cix, yZero - h, 1, h);
+    }
+    if (colMin[cix] < 0){
+      const h = Math.max(1, Math.sqrt(-colMin[cix]) * sc);
+      ctx.fillRect(cix, yZero, 1, h);
+    }
   }
   ctx.strokeStyle = C.axis; ctx.lineWidth = 1;
   ctx.beginPath(); ctx.moveTo(0, H - 0.5); ctx.lineTo(W, H - 0.5); ctx.stroke();
+  if (vmin < 0){
+    ctx.beginPath(); ctx.moveTo(0, Math.round(yZero) + 0.5); ctx.lineTo(W, Math.round(yZero) + 0.5); ctx.stroke();
+  }
   // year labels
   ctx.font = "10px system-ui, sans-serif"; ctx.fillStyle = C.muted; ctx.textAlign = "center"; ctx.textBaseline = "top";
   const y0 = yearOf(b0), y1 = yearOf(b1);
@@ -1198,6 +1216,7 @@ const PROB_TICKS = [0.01, 0.1, 1, 5, 10, 30, 50, 70, 90, 95, 99, 99.9, 99.99];
 const fmtPct = e => (e < 0.1 || e > 99.9) ? e.toFixed(2) : (e < 1 || e > 99) ? e.toFixed(1) : e.toFixed(0);
 
 /* ============================== flow duration curve ============================== */
+const FDC_SUB = "Percent of days the flow is equaled or exceeded, selected range — probability scale spreads the extremes";
 let fdcCache = null;
 function renderFDC(sorted){
   const C = colors();
@@ -1207,18 +1226,35 @@ function renderFDC(sorted){
   const padL = 52, padR = 10, padT = 8, padB = 22;
   const plotW = W - padL - padR, plotH = H - padT - padB;
   ctx.clearRect(0, 0, W, H);
-  const pos = sorted.filter(v => v > 0);   // ascending
+  // Exceedance is computed over every day in the range (sorted ascending);
+  // days with zero or reverse (negative) flow count toward it but cannot be
+  // drawn on the log axis, so the curve ends where flow reaches zero.
+  const n = sorted.length;
+  let k = 0;
+  while (k < n && !(sorted[k] > 0)) k++;   // sorted[k..] are the positive days
+  const nPos = n - k;
   fdcCache = null;
-  if (pos.length < 5){ ctx.fillStyle = C.muted; ctx.textAlign="center"; ctx.fillText("Not enough positive values for a flow duration curve", W/2, H/2); return; }
-  const lo = pos[0] * 0.8, hi = pos[pos.length - 1] * 1.25;
+  const sub = document.getElementById("fdcSub");
+  sub.textContent = FDC_SUB;
+  if (k > 0 && n){
+    const pz = k / n * 100;
+    sub.textContent += " · " + k.toLocaleString("en-US") + (k === 1 ? " day" : " days") +
+      " (" + (pz < 0.01 ? "<0.01" : fmtPct(pz)) + "%) at or below 0 ft³/s counted, not drawn on the log scale";
+  }
+  if (nPos < 5){
+    ctx.fillStyle = C.muted; ctx.textAlign = "center";
+    ctx.fillText(k * 2 > n ? "Flow is zero or negative on most days in this range — no curve on a log scale"
+                           : "Not enough positive values for a flow duration curve", W/2, H/2);
+    return;
+  }
+  const lo = sorted[k] * 0.8, hi = sorted[n - 1] * 1.25;
   const l0 = Math.log10(lo), l1 = Math.log10(hi);
-  const n = pos.length;
   // exceedance plotting positions on a normal-probability axis
   const pLoF = Math.max(0.00005, 0.5 / n), pHiF = Math.min(0.99995, 1 - 0.5 / n);
   const zLo = probit(pLoF), zHi = probit(pHiF);
   const x = pct => padL + (probit(Math.min(pHiF, Math.max(pLoF, pct / 100))) - zLo) / (zHi - zLo) * plotW;
-  const y = v => padT + plotH - (Math.log10(v) - l0) / (l1 - l0) * plotH;
-  const qAt = pct => pos[Math.max(0, Math.min(n - 1, Math.round(n - 0.5 - pct / 100 * n)))];
+  const y = v => v > 0 ? padT + plotH - (Math.log10(v) - l0) / (l1 - l0) * plotH : padT + plotH;
+  const qAt = pct => sorted[Math.max(0, Math.min(n - 1, Math.round(n - 0.5 - pct / 100 * n)))];
   ctx.font = "11px system-ui, sans-serif";
   ctx.strokeStyle = C.grid; ctx.fillStyle = C.muted; ctx.textAlign = "right"; ctx.textBaseline = "middle";
   logTicks(lo, hi).forEach(v => {
@@ -1240,13 +1276,14 @@ function renderFDC(sorted){
   ctx.strokeStyle = C.series; ctx.lineWidth = 2; ctx.lineJoin = "round";
   ctx.beginPath();
   // draw the data itself at its plotting positions (probit-spaced)
-  const step = Math.max(1, Math.floor(n / 3000));
+  const step = Math.max(1, Math.floor(nPos / 3000));
   let first = true;
-  for (let j = n - 1; j >= 0; j -= step){
-    const exceed = (n - j - 0.5) / n * 100;   // % of days pos[j] is equaled or exceeded
-    const xx = x(exceed), yy = y(pos[j]);
+  for (let j = n - 1; j >= k; j -= step){
+    const exceed = (n - j - 0.5) / n * 100;   // % of days sorted[j] is equaled or exceeded
+    const xx = x(exceed), yy = y(sorted[j]);
     if (first){ ctx.moveTo(xx, yy); first = false; } else ctx.lineTo(xx, yy);
   }
+  if ((n - 1 - k) % step) ctx.lineTo(x((n - k - 0.5) / n * 100), y(sorted[k]));
   ctx.stroke();
   fdcCache = { x, y, qAt, W, H, padL, padT, plotW, plotH, zLo, zHi, pLoF, pHiF };
 }
@@ -1271,7 +1308,8 @@ fdcCanvasEl.addEventListener("pointermove", e => {
   octx.beginPath(); octx.arc(xx, yy, 6, 0, 7); octx.fillStyle = C.surface; octx.fill();
   octx.beginPath(); octx.arc(xx, yy, 4, 0, 7); octx.fillStyle = C.series; octx.fill();
   setTip(fdcTip, fdcCanvasEl.parentElement, xx, yy,
-    [["tv", fmtFlow(v) + " ft³/s", true], ["tl", "exceeded " + fmtPct(p) + "% of days"]]);
+    [["tv", fmtFlow(v) + " ft³/s" + (v > 0 ? "" : " (not drawn on the log scale)"), true],
+     ["tl", "exceeded " + fmtPct(p) + "% of days"]]);
 });
 fdcCanvasEl.addEventListener("pointerleave", () => {
   fdcTip.style.display = "none";
@@ -1436,7 +1474,8 @@ function renderFoot(){
   p0.textContent = "Evaristo Critical Zone Hydrology Lab";
   const p1 = document.createElement("div");
   p1.textContent = "Source: U.S. Geological Survey Water Data APIs, National Water Information System daily values " +
-    "(parameter 00060, discharge in cubic feet per second). Retrieved " + INDEX.generated + ".";
+    "(parameter 00060, discharge, and at tidal stations 72137, tide-filtered discharge; cubic feet per second). " +
+    "Retrieved " + INDEX.generated + ".";
   const p2 = document.createElement("div");
   if (s.nP > 0){
     p2.textContent = "Note: " + s.nP.toLocaleString("en-US") +
@@ -1486,7 +1525,7 @@ function buildStationCSV(){
   for (let i = a; i < b; i++) rows.push([state.site.no, isoDay(state.days[i]), state.vals[i]]);
   const text = csvText([
     "USGS " + state.site.no + " " + state.site.nm,
-    statLabel(state.stat) + " discharge, cubic feet per second (parameter 00060)",
+    statLabel(state.stat) + " discharge, cubic feet per second (parameter " + statParam(state.stat) + ")",
     "Date range " + isoDay(state.range[0]) + " to " + isoDay(state.range[1]),
     "Source: USGS Water Data APIs (NWIS daily values), retrieved " + INDEX.generated + "; recent values may be provisional"
   ], ["site_no", "date", "discharge_cfs"], rows);
@@ -1494,7 +1533,7 @@ function buildStationCSV(){
 }
 function buildListCSV(){
   const rows = filtered.map(s => {
-    const p = s.stats[s.pref];
+    const p = rec(s);
     return [s.no, s.nm, s.lat, s.lon, s.cty, s.huc, s.da == null ? "" : s.da, isoDay(p[0]), isoDay(p[1]), p[2]];
   });
   const text = csvText([
@@ -1548,7 +1587,7 @@ document.addEventListener("visibilitychange", () => { if (document.visibilitySta
   let start = hash.get("site");
   if (!start || !byNo[start]){
     let best = SITES[0];
-    SITES.forEach(s => { if (s.stats[s.pref][2] > best.stats[best.pref][2]) best = s; });
+    SITES.forEach(s => { if (rec(s)[2] > rec(best)[2]) best = s; });
     start = best.no;
   }
   selectSite(start);
